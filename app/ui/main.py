@@ -69,6 +69,8 @@ if not accounts:
             st.rerun()
 
     st.stop()
+account_options = {a.name: a.id for a in accounts}
+current_month = datetime.now().strftime("%Y-%m")
 
 # --------------------------------------------------
 # DASHBOARD
@@ -92,6 +94,48 @@ metric4.metric("📈 Net Savings", f"₹{savings:,.0f}")
 
 st.divider()
 
+#--------------------------------------------------
+# AI QUICK ENTRY
+#-------------------------------------------------
+
+from app.ai.transaction_parser import parse_transaction, validate_parsed
+
+st.header("🤖 AI Quick Entry")
+nl_input = st.text_input("Describe a transaction", placeholder="e.g. spent 300 on uber yesterday")
+
+if st.button("Parse"):
+    try:
+        parsed = parse_transaction(nl_input)
+        errors = validate_parsed(parsed)
+        st.session_state["ai_parsed"] = parsed
+        st.session_state["ai_errors"] = errors
+    except Exception as e:
+        st.error(f"Couldn't parse that: {e}")
+
+if "ai_parsed" in st.session_state:
+    parsed = st.session_state["ai_parsed"]
+    errors = st.session_state["ai_errors"]
+
+    st.write("**Parsed result:**", parsed)
+
+    if errors:
+        st.warning("Issues found: " + ", ".join(errors))
+    else:
+        acc_name = st.selectbox("Save to account", list(account_options.keys()), key="ai_account")
+        if st.button("✅ Confirm & Save"):
+            add_transaction(
+                amount=parsed["amount"],
+                type=parsed["type"],
+                category=parsed["category"],
+                date=datetime.strptime(parsed["date"], "%Y-%m-%d"),
+                account_id=account_options[acc_name],
+                description=parsed.get("description"),
+                payment_method="Other",
+            )
+            st.success("Saved!")
+            del st.session_state["ai_parsed"]
+            st.rerun()
+
 # --------------------------------------------------
 # ADD TRANSACTION
 # --------------------------------------------------
@@ -109,7 +153,6 @@ categories = (
     else INCOME_CATEGORIES
 )
 
-account_options = {a.name: a.id for a in accounts}
 
 with st.form("add_txn_form"):
 
@@ -230,6 +273,51 @@ else:
 
 st.divider()
 
+#--------------------------------------------------
+# AI SUMMARY
+#--------------------------------------------------
+
+from app.ai.summary_generator import generate_summary
+from app.services.analytics_service import filter_by_period
+
+st.header("📝 AI Summary")
+
+period_choice = st.radio("Period", ["This Week", "This Month"], horizontal=True)
+period_key = "week" if period_choice == "This Week" else "month"
+
+if st.button("Generate Summary"):
+    period_df = filter_by_period(df, period_key)
+    if period_df.empty:
+        st.info("No transactions in this period yet.")
+    else:
+        p_income, p_expense, p_savings = get_summary(period_df)
+        p_breakdown = get_category_breakdown(period_df, "expense")
+        with st.spinner("Thinking..."):
+            summary_text = generate_summary(period_choice, p_income, p_expense, p_savings, p_breakdown)
+        st.write(summary_text)
+
+# --------------------------------------------------
+# AI INSIGHTS
+# --------------------------------------------------
+
+from app.ai.insight_generator import build_insight_facts, generate_insights
+from app.services.analytics_service import get_month_over_month_comparison
+from app.services.budget_service import get_budgets_for_month, get_spent_for_category
+
+st.header("💡 AI Insights")
+
+if st.button("Generate Insights"):
+    comparison_df = get_month_over_month_comparison(df)
+    current_budgets = get_budgets_for_month(current_month)
+    budgets_status = [
+        {"category": b.category, "budget": b.amount, "spent": get_spent_for_category(b.category, current_month)}
+        for b in current_budgets
+    ]
+    facts = build_insight_facts(comparison_df, budgets_status)
+    with st.spinner("Analyzing..."):
+        insight_text = generate_insights(facts)
+    st.write(insight_text)
+
 # --------------------------------------------------
 # GOALS
 # --------------------------------------------------
@@ -317,7 +405,6 @@ else:
 
 st.header("📅 Budgets")
 
-current_month = datetime.now().strftime("%Y-%m")
 
 with st.expander("➕ Set / Update Budget"):
     with st.form("add_budget_form"):
