@@ -1,5 +1,6 @@
 from app.database.session import SessionLocal
 from app.models.transaction import Transaction
+from app.services.recurrence_engine import match_and_advance
 
 def add_transaction(amount, type, category, date, account_id, description=None, payment_method=None):
     session = SessionLocal()
@@ -9,16 +10,18 @@ def add_transaction(amount, type, category, date, account_id, description=None, 
             type=type,
             category=category,
             date=date,
-            account_id=account_id,
             description=description,
             payment_method=payment_method,
+            account_id=account_id,
         )
         session.add(txn)
         session.commit()
         session.refresh(txn)
-        return txn
     finally:
         session.close()
+
+    match_and_advance(txn)
+    return txn
 
 def get_all_transactions():
     session = SessionLocal()

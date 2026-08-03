@@ -63,3 +63,108 @@ def get_month_over_month_comparison(df):
         axis=1
     )
     return comparison
+
+def build_balance_projection(current_balance, forecast_items):
+    if not forecast_items:
+        return pd.DataFrame([{"date": datetime.now(), "balance": current_balance}])
+
+    sorted_items = sorted(forecast_items, key=lambda x: x["date"])
+    rows = [{"date": datetime.now(), "balance": current_balance}]
+    running = current_balance
+
+    for item in sorted_items:
+        running += item["amount"] if item["type"] == "income" else -item["amount"]
+        rows.append({"date": item["date"], "balance": running})
+
+    return pd.DataFrame(rows)
+
+def get_dashboard_insights(df):
+    insights = []
+
+    if df.empty:
+        return insights
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    expenses = df[df["type"] == "expense"]
+    income = df[df["type"] == "income"]
+
+    # Biggest spending category (all-time)
+    if not expenses.empty:
+        top_category = expenses.groupby("category")["amount"].sum().idxmax()
+        top_amount = expenses.groupby("category")["amount"].sum().max()
+        insights.append(f"📊 Your biggest spending category is **{top_category}** (₹{top_amount:,.0f} total)")
+
+    # Largest single transaction
+    if not expenses.empty:
+        largest = expenses.loc[expenses["amount"].idxmax()]
+        insights.append(f"💸 Your largest expense was ₹{largest['amount']:,.0f} on {largest['category']} ({largest['date'].strftime('%b %d')})")
+
+    # Unusual spending: today/this week vs category average
+    if not expenses.empty:
+        avg_txn = expenses["amount"].mean()
+        recent = expenses[expenses["date"] >= datetime.now() - timedelta(days=7)]
+        unusual = recent[recent["amount"] > avg_txn * 2]
+        if not unusual.empty:
+            row = unusual.iloc[0]
+            insights.append(f"⚠️ Unusual spending detected: ₹{row['amount']:,.0f} on {row['category']} — more than double your average transaction")
+
+    # Savings rate
+    total_income = income["amount"].sum()
+    total_expense = expenses["amount"].sum()
+    if total_income > 0:
+        savings_rate = ((total_income - total_expense) / total_income) * 100
+        insights.append(f"🏦 Your overall savings rate is **{savings_rate:.0f}%** of income")
+
+    # Income stability: variation across income transactions
+    if len(income) >= 2:
+        income_std = income["amount"].std()
+        income_mean = income["amount"].mean()
+        variability = (income_std / income_mean) * 100 if income_mean else 0
+        stability_label = "stable" if variability < 30 else "variable"
+        insights.append(f"📈 Your income is **{stability_label}** (varies by ~{variability:.0f}% across sources)")
+
+    return insights
+
+def build_financial_timeline(transactions, expected_items, goals, days_back=14, days_forward=45):
+    now = datetime.now()
+    window_start = now - timedelta(days=days_back)
+    window_end = now + timedelta(days=days_forward)
+
+    events = []
+
+    for t in transactions:
+        if window_start <= t.date <= window_end:
+            events.append({
+                "date": t.date,
+                "label": t.description or t.category,
+                "amount": t.amount,
+                "type": t.type,
+                "kind": "transaction",
+                "status": "happened",
+            })
+
+    for e in expected_items:
+        if e.status == "pending" and window_start <= e.expected_date <= window_end:
+            events.append({
+                "date": e.expected_date,
+                "label": e.label,
+                "amount": e.amount,
+                "type": e.type,
+                "kind": "expected",
+                "status": "pending",
+            })
+
+    for g in goals:
+        if g.target_date and window_start <= g.target_date <= window_end:
+            events.append({
+                "date": g.target_date,
+                "label": f"Goal deadline: {g.name}",
+                "amount": g.target_amount - g.current_amount,
+                "type": "goal",
+                "kind": "goal",
+                "status": "upcoming",
+            })
+
+    events.sort(key=lambda e: e["date"])
+    return events
