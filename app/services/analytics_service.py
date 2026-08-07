@@ -196,3 +196,55 @@ def get_proactive_alerts(budgets_status, goals, forecast_projection_df, forecast
         alerts.append(f"₹{total_due:,.0f} in expected payments due within the next 7 days ({', '.join(f['label'] for f in upcoming_7d)})")
 
     return alerts
+
+def get_behavior_analysis(df):
+    if df.empty:
+        return {}
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    expenses = df[df["type"] == "expense"].copy()
+
+    if expenses.empty:
+        return {}
+
+    # Category trend: compare last 30 days vs prior 30 days
+    now = datetime.now()
+    recent_30 = expenses[expenses["date"] >= now - timedelta(days=30)]
+    prior_30 = expenses[(expenses["date"] >= now - timedelta(days=60)) & (expenses["date"] < now - timedelta(days=30))]
+
+    recent_by_cat = recent_30.groupby("category")["amount"].sum()
+    prior_by_cat = prior_30.groupby("category")["amount"].sum()
+
+    trends = []
+    for cat in set(list(recent_by_cat.index) + list(prior_by_cat.index)):
+        r = recent_by_cat.get(cat, 0)
+        p = prior_by_cat.get(cat, 0)
+        if p > 0:
+            change = ((r - p) / p) * 100
+        elif r > 0:
+            change = 100
+        else:
+            continue
+        trends.append({"category": cat, "recent": r, "prior": p, "change_pct": change})
+
+    trends.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+
+    # Weekday vs weekend
+    expenses["is_weekend"] = expenses["date"].dt.dayofweek >= 5
+    weekend_avg = expenses[expenses["is_weekend"]]["amount"].mean() or 0
+    weekday_avg = expenses[~expenses["is_weekend"]]["amount"].mean() or 0
+
+    # Most frequent descriptions (recurring-looking spend)
+    if "description" in expenses.columns:
+        freq = expenses["description"].dropna().value_counts().head(5)
+        frequent_items = [{"description": desc, "count": count} for desc, count in freq.items()]
+    else:
+        frequent_items = []
+
+    return {
+        "category_trends": trends[:5],
+        "weekend_avg": weekend_avg,
+        "weekday_avg": weekday_avg,
+        "frequent_items": frequent_items,
+    }

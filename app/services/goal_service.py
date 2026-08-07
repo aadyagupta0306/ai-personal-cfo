@@ -52,3 +52,36 @@ def get_goal_pacing(goal):
         "amount_remaining": amount_remaining,
         "required_weekly": required_weekly,
     }
+
+def get_goal_priority_ranking(available_amount):
+    goals = get_all_goals()
+    active = [g for g in goals if g.current_amount < g.target_amount]
+
+    ranked = []
+    for g in active:
+        pacing = get_goal_pacing(g)
+        if pacing and pacing.get("status") == "active":
+            urgency = pacing["required_weekly"]
+        elif pacing and pacing.get("status") == "overdue":
+            urgency = pacing["amount_remaining"]  # treat overdue as maximally urgent
+        else:
+            urgency = 0  # no deadline set, lowest urgency
+
+        ranked.append({
+            "goal": g,
+            "urgency": urgency,
+            "amount_remaining": g.target_amount - g.current_amount,
+        })
+
+    ranked.sort(key=lambda x: x["urgency"], reverse=True)
+
+    total_urgency = sum(r["urgency"] for r in ranked) or 1
+    remaining_pool = available_amount
+
+    for r in ranked:
+        share = (r["urgency"] / total_urgency) * available_amount
+        suggested = min(share, r["amount_remaining"], remaining_pool)
+        r["suggested_allocation"] = round(suggested, -1)
+        remaining_pool -= r["suggested_allocation"]
+
+    return ranked

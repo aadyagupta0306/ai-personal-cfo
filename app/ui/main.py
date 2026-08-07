@@ -7,11 +7,6 @@ import pandas as pd
 from datetime import datetime
 
 from app.services.transaction_service import add_transaction, get_all_transactions
-from app.services.analytics_service import (
-    get_transactions_df, get_summary, get_category_breakdown, get_monthly_trend,
-    get_dashboard_insights, build_balance_projection, filter_by_period,
-    get_month_over_month_comparison, build_financial_timeline,
-)
 from app.services.account_service import add_account, get_all_accounts, get_account_balance
 from app.services.goal_service import add_goal, get_all_goals, add_contribution, get_goal_pacing
 from app.services.budget_service import add_budget, get_budgets_for_month, get_spent_for_category, get_budget_velocity
@@ -30,6 +25,12 @@ from app.ai.chat_assistant import chat_with_cfo
 from app.ai.decision_narrator import explain_scenario
 from app.services.analytics_service import get_proactive_alerts
 from app.services.briefing_service import get_or_generate_briefing
+from app.services.goal_service import add_goal, get_all_goals, add_contribution, get_goal_pacing, get_goal_priority_ranking
+from app.services.analytics_service import (
+    get_transactions_df, get_summary, get_category_breakdown, get_monthly_trend,
+    get_dashboard_insights, build_balance_projection, filter_by_period,
+    get_month_over_month_comparison, build_financial_timeline, get_behavior_analysis,
+)
 
 # --------------------------------------------------
 # Page Config
@@ -137,10 +138,8 @@ tab_dashboard, tab_chat, tab_whatif, tab_transactions, tab_goals, tab_budgets, t
 # TAB: DASHBOARD
 # ==================================================
 with tab_dashboard:
-
     forecast_items = get_forecast(90)
     projection_df = build_balance_projection(total_balance, forecast_items)
-
     current_budgets_for_alerts = get_budgets_for_month(current_month)
     budgets_status_for_alerts = [
         {
@@ -149,31 +148,23 @@ with tab_dashboard:
         }
         for b in current_budgets_for_alerts
     ]
-
     alerts = get_proactive_alerts(budgets_status_for_alerts, goals, projection_df, forecast_items)
-
     st.subheader("📋 Daily Briefing")
     col_a, col_b = st.columns([5, 1])
     with col_b:
         force_refresh = st.button("🔄 Refresh")
-
     briefing_text = get_or_generate_briefing(alerts, force_refresh=force_refresh)
-
     if alerts:
         st.warning(briefing_text)
     else:
         st.success(briefing_text)
-
     st.divider()
-
     st.header("🤖 AI Quick Entry")
     nl_input = st.text_input("Describe a transaction", placeholder="e.g. spent 300 on uber yesterday")
-
     if st.button("Parse"):
         try:
             pending = get_pending_for_matching()
             parsed = parse_transaction(nl_input, pending)
-
             matched_id = parsed.get("matched_expected_id")
             if matched_id:
                 session = SessionLocal()
@@ -185,27 +176,21 @@ with tab_dashboard:
                     parsed["category"] = matched_item.category
                     parsed["date"] = matched_item.expected_date.strftime("%Y-%m-%d")
                     parsed["description"] = matched_item.label
-
             errors = validate_parsed(parsed)
             if errors:
                 parsed = parse_transaction(nl_input, pending)
                 errors = validate_parsed(parsed)
-
             st.session_state["ai_parsed"] = parsed
             st.session_state["ai_errors"] = errors
             st.session_state["ai_matched_id"] = matched_id
         except Exception as e:
             st.error(f"Couldn't parse that: {e}")
-
     if "ai_parsed" in st.session_state:
         parsed = st.session_state["ai_parsed"]
         errors = st.session_state["ai_errors"]
-
         if st.session_state.get("ai_matched_id"):
             st.info("✅ Matched to your pending expected transaction — using its recorded amount and date.")
-
         st.write("**Parsed result:**", parsed)
-
         if errors:
             st.warning("Issues found: " + ", ".join(errors))
         else:
@@ -221,30 +206,24 @@ with tab_dashboard:
                 if parsed["type"] == "income":
                     st.session_state["income_logged"] = {"amount": parsed["amount"]}
                 st.rerun()
-
     st.divider()
-
     insights = get_dashboard_insights(df)
     if insights:
         st.subheader("🔍 What This Means")
         for insight in insights:
             st.write(insight)
         st.divider()
-
     st.subheader("📈 Balance Forecast (Next 90 Days)")
     fig_forecast = px.line(projection_df, x="date", y="balance", markers=True, title="Projected Balance Over Time")
     st.plotly_chart(fig_forecast, use_container_width=True)
-
     if forecast_items:
         lowest_point = min(projection_df["balance"])
         if lowest_point < 0:
             st.error(f"⚠️ Your projected balance goes negative (as low as ₹{lowest_point:,.0f}) based on current commitments.")
-
     st.subheader("🗓️ Financial Timeline")
     all_transactions = get_all_transactions()
     all_expected = get_all_expected()
     timeline_events = build_financial_timeline(all_transactions, all_expected, goals)
-
     if timeline_events:
         for e in timeline_events:
             is_past = e["date"] < datetime.now()
@@ -252,32 +231,27 @@ with tab_dashboard:
             icon = "✅" if e["kind"] == "transaction" else ("🔮" if e["kind"] == "expected" else "🎯")
             sign = "+" if e["type"] == "income" else ("-" if e["kind"] != "goal" else "")
             line = f"{icon} **{date_str}** — {e['label']} — {sign}₹{abs(e['amount']):,.0f}"
-
             if is_past:
                 st.caption(line)
             else:
                 st.write(line)
     else:
         st.info("No timeline events in this window.")
-
     st.subheader("📊 Analytics")
     if not df.empty:
         breakdown = get_category_breakdown(df, "expense")
         if not breakdown.empty:
             fig1 = px.pie(breakdown, names="category", values="amount", title="Expense Breakdown")
             st.plotly_chart(fig1, use_container_width=True)
-
         trend = get_monthly_trend(df)
         if not trend.empty:
             fig2 = px.bar(trend, x="month", y="amount", color="type", barmode="group", title="Monthly Income vs Expense")
             st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("Add your first transaction to start seeing analytics.")
-
     st.subheader("📝 AI Summary")
     period_choice = st.radio("Period", ["This Week", "This Month"], horizontal=True)
     period_key = "week" if period_choice == "This Week" else "month"
-
     if st.button("Generate Summary"):
         period_df = filter_by_period(df, period_key)
         if period_df.empty:
@@ -288,7 +262,6 @@ with tab_dashboard:
             with st.spinner("Thinking..."):
                 summary_text = generate_summary(period_choice, p_income, p_expense, p_savings, p_breakdown)
             st.write(summary_text)
-
     st.subheader("💡 AI Insights")
     if st.button("Generate Insights"):
         comparison_df = get_month_over_month_comparison(df)
@@ -301,7 +274,22 @@ with tab_dashboard:
         with st.spinner("Analyzing..."):
             insight_text = generate_insights(facts)
         st.write(insight_text)
-
+    st.subheader("📉 Behavior Analysis")
+    behavior = get_behavior_analysis(df)
+    if behavior:
+        if behavior["category_trends"]:
+            st.write("**Category trends (last 30 vs prior 30 days):**")
+            for t in behavior["category_trends"]:
+                direction = "📈" if t["change_pct"] > 0 else "📉"
+                st.write(f"{direction} {t['category']}: ₹{t['prior']:,.0f} → ₹{t['recent']:,.0f} ({t['change_pct']:+.0f}%)")
+        st.write(f"**Weekday vs weekend:** avg ₹{behavior['weekday_avg']:,.0f}/transaction on weekdays, ₹{behavior['weekend_avg']:,.0f} on weekends")
+        if behavior["frequent_items"]:
+            st.write("**Most frequent expenses:**")
+            for item in behavior["frequent_items"]:
+                st.write(f"- {item['description']} ({item['count']}x)")
+    else:
+        st.info("Not enough data yet for behavior analysis.")
+    st.divider()
     st.subheader("🧾 Recent Transactions")
     transactions = get_all_transactions()
     if transactions:
@@ -446,6 +434,28 @@ with tab_transactions:
 with tab_goals:
     st.header("🎯 Goals")
 
+    st.subheader("🧭 Goal Optimization")
+    st.caption("See how to best split your available savings across active goals.")
+
+    available_to_allocate = st.number_input(
+        "How much can you save/allocate this month? (₹)", min_value=0.0, step=500.0, key="opt_available"
+    )
+
+    if st.button("Suggest Allocation") and available_to_allocate > 0:
+        ranking = get_goal_priority_ranking(available_to_allocate)
+
+        if ranking:
+            for r in ranking:
+                g = r["goal"]
+                st.write(
+                    f"**{g.name}** — suggested ₹{r['suggested_allocation']:,.0f} "
+                    f"(₹{r['amount_remaining']:,.0f} remaining)"
+                )
+        else:
+            st.info("No active goals to allocate toward.")
+
+    st.divider()
+
     with st.expander("➕ Add New Goal"):
         with st.form("add_goal_form"):
             goal_name = st.text_input("Goal Name", placeholder="e.g. Goa Trip")
@@ -481,7 +491,7 @@ with tab_goals:
                     st.rerun()
     else:
         st.info("No goals yet — add one above.")
-
+        
 # ==================================================
 # TAB: BUDGETS
 # ==================================================
