@@ -168,3 +168,31 @@ def build_financial_timeline(transactions, expected_items, goals, days_back=14, 
 
     events.sort(key=lambda e: e["date"])
     return events
+
+def get_proactive_alerts(budgets_status, goals, forecast_projection_df, forecast_items):
+    alerts = []
+
+    for b in budgets_status:
+        if b["velocity"]["spent"] > b["amount"]:
+            alerts.append(f"{b['category']} budget is already exceeded by ₹{b['velocity']['spent'] - b['amount']:,.0f}")
+        elif b["velocity"]["will_exceed"]:
+            alerts.append(f"{b['category']} is on pace to exceed budget by month end (safe spend: ₹{b['velocity']['safe_daily_spend']:,.0f}/day)")
+
+    for g in goals:
+        from app.services.goal_service import get_goal_pacing
+        pacing = get_goal_pacing(g)
+        if pacing:
+            if pacing["status"] == "overdue" and pacing["amount_remaining"] > 0:
+                alerts.append(f"Goal '{g.name}' target date has passed, still ₹{pacing['amount_remaining']:,.0f} short")
+
+    if not forecast_projection_df.empty:
+        lowest = forecast_projection_df["balance"].min()
+        if lowest < 0:
+            alerts.append(f"Projected balance goes negative (as low as ₹{lowest:,.0f}) within 90 days based on current commitments")
+
+    upcoming_7d = [f for f in forecast_items if (f["date"] - datetime.now()).days <= 7 and f["type"] == "expense"]
+    if upcoming_7d:
+        total_due = sum(f["amount"] for f in upcoming_7d)
+        alerts.append(f"₹{total_due:,.0f} in expected payments due within the next 7 days ({', '.join(f['label'] for f in upcoming_7d)})")
+
+    return alerts

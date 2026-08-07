@@ -14,3 +14,5 @@ from app.models.transaction import Base
 from app.models import account, goal, budget, expected_transaction, chat_message
 
 from app.models import account, goal, budget, expected_transaction, chat_message, chat_summary
+
+from app.models import account, goal, budget, expected_transaction, chat_message, chat_summary, daily_briefing

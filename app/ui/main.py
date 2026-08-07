@@ -28,6 +28,8 @@ from app.ai.summary_generator import generate_summary
 from app.ai.insight_generator import build_insight_facts, generate_insights
 from app.ai.chat_assistant import chat_with_cfo
 from app.ai.decision_narrator import explain_scenario
+from app.services.analytics_service import get_proactive_alerts
+from app.services.briefing_service import get_or_generate_briefing
 
 # --------------------------------------------------
 # Page Config
@@ -136,6 +138,34 @@ tab_dashboard, tab_chat, tab_whatif, tab_transactions, tab_goals, tab_budgets, t
 # ==================================================
 with tab_dashboard:
 
+    forecast_items = get_forecast(90)
+    projection_df = build_balance_projection(total_balance, forecast_items)
+
+    current_budgets_for_alerts = get_budgets_for_month(current_month)
+    budgets_status_for_alerts = [
+        {
+            "category": b.category, "amount": b.amount,
+            "velocity": get_budget_velocity(b.category, current_month, b.amount),
+        }
+        for b in current_budgets_for_alerts
+    ]
+
+    alerts = get_proactive_alerts(budgets_status_for_alerts, goals, projection_df, forecast_items)
+
+    st.subheader("📋 Daily Briefing")
+    col_a, col_b = st.columns([5, 1])
+    with col_b:
+        force_refresh = st.button("🔄 Refresh")
+
+    briefing_text = get_or_generate_briefing(alerts, force_refresh=force_refresh)
+
+    if alerts:
+        st.warning(briefing_text)
+    else:
+        st.success(briefing_text)
+
+    st.divider()
+
     st.header("🤖 AI Quick Entry")
     nl_input = st.text_input("Describe a transaction", placeholder="e.g. spent 300 on uber yesterday")
 
@@ -202,8 +232,6 @@ with tab_dashboard:
         st.divider()
 
     st.subheader("📈 Balance Forecast (Next 90 Days)")
-    forecast_items = get_forecast(90)
-    projection_df = build_balance_projection(total_balance, forecast_items)
     fig_forecast = px.line(projection_df, x="date", y="balance", markers=True, title="Projected Balance Over Time")
     st.plotly_chart(fig_forecast, use_container_width=True)
 
