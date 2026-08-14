@@ -8,7 +8,7 @@ from datetime import datetime
 
 from app.services.transaction_service import add_transaction, get_all_transactions
 from app.services.account_service import add_account, get_all_accounts, get_account_balance
-from app.services.goal_service import add_goal, get_all_goals, add_contribution, get_goal_pacing
+from app.services.goal_service import add_goal, get_all_goals, add_contribution, get_goal_pacing, get_goal_priority_ranking
 from app.services.budget_service import add_budget, get_budgets_for_month, get_spent_for_category, get_budget_velocity
 from app.services.expected_transaction_service import (
     add_expected_transaction, get_all_expected, mark_status, get_forecast, get_pending_for_matching,
@@ -25,12 +25,48 @@ from app.ai.chat_assistant import chat_with_cfo
 from app.ai.decision_narrator import explain_scenario
 from app.services.analytics_service import get_proactive_alerts
 from app.services.briefing_service import get_or_generate_briefing
-from app.services.goal_service import add_goal, get_all_goals, add_contribution, get_goal_pacing, get_goal_priority_ranking
 from app.services.analytics_service import (
     get_transactions_df, get_summary, get_category_breakdown, get_monthly_trend,
     get_dashboard_insights, build_balance_projection, filter_by_period,
     get_month_over_month_comparison, build_financial_timeline, get_behavior_analysis,
+    filter_transactions_list_by_month,
 )
+
+# --------------------------------------------------
+# Caching for performance
+# --------------------------------------------------
+
+@st.cache_data(ttl=10)
+def cached_get_all_accounts():
+    return get_all_accounts()
+
+@st.cache_data(ttl=10)
+def cached_get_all_transactions():
+    return get_all_transactions()
+
+@st.cache_data(ttl=10)
+def cached_get_transactions_df():
+    return get_transactions_df()
+
+@st.cache_data(ttl=10)
+def cached_get_all_goals():
+    return get_all_goals()
+
+@st.cache_data(ttl=10)
+def cached_get_budgets_for_month(month):
+    return get_budgets_for_month(month)
+
+@st.cache_data(ttl=10)
+def cached_get_all_expected():
+    return get_all_expected()
+
+@st.cache_data(ttl=10)
+def cached_get_forecast(days):
+    return get_forecast(days)
+
+@st.cache_data(ttl=10)
+def cached_get_account_balance(account_id):
+    return get_account_balance(account_id)
 
 # --------------------------------------------------
 # Page Config
@@ -44,7 +80,7 @@ st.caption("Your AI-powered financial operating system.")
 # ACCOUNTS (one-time onboarding)
 # --------------------------------------------------
 
-accounts = get_all_accounts()
+accounts = cached_get_all_accounts()
 
 if not accounts:
     st.header("🏦 Set Up Your Account")
@@ -57,6 +93,7 @@ if not accounts:
 
         if st.form_submit_button("Create Account"):
             add_account(acc_name, acc_type, acc_balance)
+            st.cache_data.clear()
             st.rerun()
 
     st.stop()
@@ -67,15 +104,15 @@ if not accounts:
 
 account_options = {a.name: a.id for a in accounts}
 current_month = datetime.now().strftime("%Y-%m")
-goals = get_all_goals()
-df = get_transactions_df()
+goals = cached_get_all_goals()
+df = cached_get_transactions_df()
 
 if not df.empty:
     income, expense, savings = get_summary(df)
 else:
     income = expense = savings = 0
 
-total_balance = sum(get_account_balance(a.id) for a in accounts)
+total_balance = sum(cached_get_account_balance(a.id) for a in accounts)
 
 if "whatif_events" not in st.session_state:
     st.session_state["whatif_events"] = []
@@ -106,6 +143,7 @@ if "income_logged" in st.session_state:
                 add_contribution(goal_names[chosen_goal_name], allocate_amount)
                 del st.session_state["income_logged"]
                 st.success("Allocated!")
+                st.cache_data.clear()
                 st.rerun()
 
     if st.button("No thanks, dismiss"):
@@ -138,9 +176,9 @@ tab_dashboard, tab_chat, tab_whatif, tab_transactions, tab_goals, tab_budgets, t
 # TAB: DASHBOARD
 # ==================================================
 with tab_dashboard:
-    forecast_items = get_forecast(90)
+    forecast_items = cached_get_forecast(90)
     projection_df = build_balance_projection(total_balance, forecast_items)
-    current_budgets_for_alerts = get_budgets_for_month(current_month)
+    current_budgets_for_alerts = cached_get_budgets_for_month(current_month)
     budgets_status_for_alerts = [
         {
             "category": b.category, "amount": b.amount,
@@ -159,6 +197,7 @@ with tab_dashboard:
     else:
         st.success(briefing_text)
     st.divider()
+
     st.header("🤖 AI Quick Entry")
     nl_input = st.text_input("Describe a transaction", placeholder="e.g. spent 300 on uber yesterday")
     if st.button("Parse"):
@@ -205,14 +244,39 @@ with tab_dashboard:
                 del st.session_state["ai_parsed"]
                 if parsed["type"] == "income":
                     st.session_state["income_logged"] = {"amount": parsed["amount"]}
+                st.cache_data.clear()
                 st.rerun()
+
     st.divider()
+
+    st.subheader("🧾 Recent Transactions")
+    txn_filter = st.selectbox("Show", ["This Month", "Last Month", "All Time"], key="txn_month_filter")
+    all_transactions_for_table = cached_get_all_transactions()
+    filtered_transactions = filter_transactions_list_by_month(all_transactions_for_table, txn_filter)
+
+    if filtered_transactions:
+        st.dataframe(
+            [
+                {
+                    "Date": t.date.strftime("%Y-%m-%d"), "Type": t.type.title(), "Category": t.category,
+                    "Amount": f"₹{t.amount:,.0f}", "Description": t.description, "Payment": t.payment_method,
+                }
+                for t in filtered_transactions
+            ],
+            use_container_width=True, hide_index=True,
+        )
+    else:
+        st.info(f"No transactions for {txn_filter.lower()}.")
+
+    st.divider()
+
     insights = get_dashboard_insights(df)
     if insights:
         st.subheader("🔍 What This Means")
         for insight in insights:
             st.write(insight)
         st.divider()
+
     st.subheader("📈 Balance Forecast (Next 90 Days)")
     fig_forecast = px.line(projection_df, x="date", y="balance", markers=True, title="Projected Balance Over Time")
     st.plotly_chart(fig_forecast, use_container_width=True)
@@ -220,9 +284,10 @@ with tab_dashboard:
         lowest_point = min(projection_df["balance"])
         if lowest_point < 0:
             st.error(f"⚠️ Your projected balance goes negative (as low as ₹{lowest_point:,.0f}) based on current commitments.")
+
     st.subheader("🗓️ Financial Timeline")
-    all_transactions = get_all_transactions()
-    all_expected = get_all_expected()
+    all_transactions = cached_get_all_transactions()
+    all_expected = cached_get_all_expected()
     timeline_events = build_financial_timeline(all_transactions, all_expected, goals)
     if timeline_events:
         for e in timeline_events:
@@ -237,6 +302,7 @@ with tab_dashboard:
                 st.write(line)
     else:
         st.info("No timeline events in this window.")
+
     st.subheader("📊 Analytics")
     if not df.empty:
         breakdown = get_category_breakdown(df, "expense")
@@ -249,6 +315,7 @@ with tab_dashboard:
             st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("Add your first transaction to start seeing analytics.")
+
     st.subheader("📝 AI Summary")
     period_choice = st.radio("Period", ["This Week", "This Month"], horizontal=True)
     period_key = "week" if period_choice == "This Week" else "month"
@@ -262,10 +329,11 @@ with tab_dashboard:
             with st.spinner("Thinking..."):
                 summary_text = generate_summary(period_choice, p_income, p_expense, p_savings, p_breakdown)
             st.write(summary_text)
+
     st.subheader("💡 AI Insights")
     if st.button("Generate Insights"):
         comparison_df = get_month_over_month_comparison(df)
-        current_budgets_for_insight = get_budgets_for_month(current_month)
+        current_budgets_for_insight = cached_get_budgets_for_month(current_month)
         budgets_status = [
             {"category": b.category, "budget": b.amount, "spent": get_spent_for_category(b.category, current_month)}
             for b in current_budgets_for_insight
@@ -274,6 +342,7 @@ with tab_dashboard:
         with st.spinner("Analyzing..."):
             insight_text = generate_insights(facts)
         st.write(insight_text)
+
     st.subheader("📉 Behavior Analysis")
     behavior = get_behavior_analysis(df)
     if behavior:
@@ -289,22 +358,6 @@ with tab_dashboard:
                 st.write(f"- {item['description']} ({item['count']}x)")
     else:
         st.info("Not enough data yet for behavior analysis.")
-    st.divider()
-    st.subheader("🧾 Recent Transactions")
-    transactions = get_all_transactions()
-    if transactions:
-        st.dataframe(
-            [
-                {
-                    "Date": t.date.strftime("%Y-%m-%d"), "Type": t.type.title(), "Category": t.category,
-                    "Amount": f"₹{t.amount:,.0f}", "Description": t.description, "Payment": t.payment_method,
-                }
-                for t in transactions
-            ],
-            use_container_width=True, hide_index=True,
-        )
-    else:
-        st.info("No transactions yet.")
 
 # ==================================================
 # TAB: ASK CFO (CHAT)
@@ -379,7 +432,7 @@ with tab_whatif:
     question_text = st.text_area("Your question", placeholder="e.g. Can I afford both of these and still hit my Munnar goal?")
 
     if st.button("🔮 Run Scenario") and st.session_state["whatif_events"]:
-        forecast_items_wf = get_forecast(90)
+        forecast_items_wf = cached_get_forecast(90)
         facts = simulate_scenario(st.session_state["whatif_events"], total_balance, forecast_items_wf, goals)
 
         proj_df = pd.DataFrame(facts["timeline"])
@@ -393,14 +446,11 @@ with tab_whatif:
 # ==================================================
 # TAB: TRANSACTIONS
 # ==================================================
-# ==================================================
-# TAB: TRANSACTIONS
-# ==================================================
 with tab_transactions:
     with st.expander("🏦 Manage Accounts"):
         st.write("**Current accounts:**")
         for a in accounts:
-            bal = get_account_balance(a.id)
+            bal = cached_get_account_balance(a.id)
             st.write(f"- {a.name} ({a.account_type}): ₹{bal:,.0f}")
 
         st.write("**Add a new account:**")
@@ -412,6 +462,7 @@ with tab_transactions:
             if st.form_submit_button("Add Account"):
                 add_account(new_acc_name, new_acc_type, new_acc_balance)
                 st.success(f"✅ Added {new_acc_name}")
+                st.cache_data.clear()
                 st.rerun()
 
     st.header("➕ Quick Add Transaction")
@@ -446,6 +497,7 @@ with tab_transactions:
         st.success("✅ Transaction added!")
         if txn_type == "income":
             st.session_state["income_logged"] = {"amount": txn_amount}
+        st.cache_data.clear()
         st.rerun()
 
 # ==================================================
@@ -486,6 +538,7 @@ with tab_goals:
 
     if goal_submitted:
         add_goal(goal_name, goal_type, target_amount, datetime.combine(target_date, datetime.min.time()))
+        st.cache_data.clear()
         st.rerun()
 
     if goals:
@@ -508,10 +561,11 @@ with tab_goals:
                 st.write("")
                 if st.button("Add", key=f"btn_{g.id}"):
                     add_contribution(g.id, contribution)
+                    st.cache_data.clear()
                     st.rerun()
     else:
         st.info("No goals yet — add one above.")
-        
+
 # ==================================================
 # TAB: BUDGETS
 # ==================================================
@@ -526,9 +580,10 @@ with tab_budgets:
 
     if budget_submitted:
         add_budget(budget_category, budget_amount, current_month)
+        st.cache_data.clear()
         st.rerun()
 
-    budgets = get_budgets_for_month(current_month)
+    budgets = cached_get_budgets_for_month(current_month)
 
     if budgets:
         for b in budgets:
@@ -578,9 +633,10 @@ with tab_upcoming:
             datetime.combine(exp_date, datetime.min.time()), exp_recurring
         )
         st.success(f"✅ Added: {exp_label}")
+        st.cache_data.clear()
         st.rerun()
 
-    expected_items = get_all_expected()
+    expected_items = cached_get_all_expected()
 
     if expected_items:
         for item in expected_items:
@@ -593,10 +649,10 @@ with tab_upcoming:
                 if item.status == "pending":
                     if st.button("Cancel", key=f"cancel_{item.id}"):
                         mark_status(item.id, "cancelled")
+                        st.cache_data.clear()
                         st.rerun()
     else:
         st.info("No expected transactions yet — add one above.")
 
-
-# run using 
+# run using
 # streamlit run app/ui/main.py
