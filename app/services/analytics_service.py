@@ -248,7 +248,7 @@ def get_behavior_analysis(df):
         "weekday_avg": weekday_avg,
         "frequent_items": frequent_items,
     }
-
+from datetime import datetime, timedelta
 def filter_transactions_list_by_month(transactions, month_filter):
     if month_filter == "All Time":
         return transactions
