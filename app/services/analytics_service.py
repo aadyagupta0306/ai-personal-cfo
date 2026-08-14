@@ -248,17 +248,3 @@ def get_behavior_analysis(df):
         "weekday_avg": weekday_avg,
         "frequent_items": frequent_items,
     }
-from datetime import datetime, timedelta
-def filter_transactions_list_by_month(transactions, month_filter):
-    if month_filter == "All Time":
-        return transactions
-
-    now = datetime.now()
-    if month_filter == "This Month":
-        target_year, target_month = now.year, now.month
-    else:  # "Last Month"
-        first_of_this_month = now.replace(day=1)
-        last_month_date = first_of_this_month - timedelta(days=1)
-        target_year, target_month = last_month_date.year, last_month_date.month
-
-    return [t for t in transactions if t.date.year == target_year and t.date.month == target_month]
