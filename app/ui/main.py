@@ -393,7 +393,27 @@ with tab_whatif:
 # ==================================================
 # TAB: TRANSACTIONS
 # ==================================================
+# ==================================================
+# TAB: TRANSACTIONS
+# ==================================================
 with tab_transactions:
+    with st.expander("🏦 Manage Accounts"):
+        st.write("**Current accounts:**")
+        for a in accounts:
+            bal = get_account_balance(a.id)
+            st.write(f"- {a.name} ({a.account_type}): ₹{bal:,.0f}")
+
+        st.write("**Add a new account:**")
+        with st.form("add_second_account_form"):
+            new_acc_name = st.text_input("Account Name", placeholder="e.g. Cash Wallet")
+            new_acc_type = st.selectbox("Account Type", ["bank", "cash", "wallet"])
+            new_acc_balance = st.number_input("Opening Balance (₹)", min_value=0.0, step=100.0)
+
+            if st.form_submit_button("Add Account"):
+                add_account(new_acc_name, new_acc_type, new_acc_balance)
+                st.success(f"✅ Added {new_acc_name}")
+                st.rerun()
+
     st.header("➕ Quick Add Transaction")
 
     txn_type = st.selectbox("Type", ["expense", "income"], key="txn_type_select")

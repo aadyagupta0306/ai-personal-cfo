@@ -52,7 +52,7 @@ def get_budget_velocity(category, month, budget_amount):
     if now.year == year and now.month == month_num:
         days_elapsed = now.day
     else:
-        days_elapsed = days_in_month  # past month, fully elapsed
+        days_elapsed = days_in_month
 
     spent = get_spent_for_category(category, month)
     daily_rate = spent / days_elapsed if days_elapsed > 0 else 0
@@ -61,11 +61,14 @@ def get_budget_velocity(category, month, budget_amount):
     remaining_budget = budget_amount - spent
     safe_daily_spend = remaining_budget / days_remaining if days_remaining > 0 else 0
 
+    reliable = days_elapsed >= 5   # need at least a few days of data before trusting the projection
+
     return {
         "spent": spent,
         "daily_rate": daily_rate,
         "projected_month_end": projected_month_end,
         "days_remaining": days_remaining,
         "safe_daily_spend": safe_daily_spend,
-        "will_exceed": projected_month_end > budget_amount,
+        "will_exceed": projected_month_end > budget_amount and reliable,
+        "reliable": reliable,
     }

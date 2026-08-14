@@ -3,13 +3,34 @@ from datetime import datetime
 from app.ai.client import call_llm
 from app.constants import EXPENSE_CATEGORIES, INCOME_CATEGORIES
 
+from datetime import timedelta
+
 def build_prompt(text, pending_items=None):
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
     pending_items = pending_items or []
+
     pending_text = "\n".join(
         f"- id={p['id']}: \"{p['label']}\" ({p['type']}, {p['category']}, ₹{p['amount']}, expected {p['expected_date']})"
         for p in pending_items
     ) or "None"
+
+    # "N days ago" lookup — for phrases like "3 days back"
+    days_ago_table = "\n".join(
+        f"{i} days ago = {(today - timedelta(days=i)).strftime('%Y-%m-%d')}"
+        for i in range(1, 11)
+    )
+
+    # exactly one entry per weekday name — the MOST RECENT past occurrence, no duplicates
+    weekday_table_lines = []
+    seen_weekdays = set()
+    for i in range(1, 8):
+        candidate = today - timedelta(days=i)
+        wd = candidate.strftime("%A")
+        if wd not in seen_weekdays:
+            weekday_table_lines.append(f"last {wd} = {candidate.strftime('%Y-%m-%d')}")
+            seen_weekdays.add(wd)
+    weekday_table = "\n".join(weekday_table_lines)
 
     return f"""You are a financial transaction parser. Convert the user's message into a single JSON object with these exact fields:
 - amount (number)
@@ -25,7 +46,14 @@ Income categories: {INCOME_CATEGORIES}
 Pending expected transactions (the user may be confirming one of these happened):
 {pending_text}
 
-Today's date is {today}. Resolve relative dates like "yesterday" or "last Monday" based on this.
+Today's date is {today_str} ({today.strftime('%A')}).
+
+For phrases like "N days ago" or "N days back", use this table:
+{days_ago_table}
+
+For phrases like "last Monday", "last Tuesday", etc., use this table (each is the single most recent past occurrence — do not pick an earlier date even if one exists further back):
+{weekday_table}
+
 If the user's message refers to one of the pending items above (by name or clear description) and does not explicitly state a different amount, still extract amount/date as best guess from the message — matched_expected_id is what matters, we'll use our own records for the final values.
 
 Do not correct, adjust, or interpret invalid values. If the amount in the message is negative or zero, output it exactly as stated — do not change its sign or value. Extract exactly what the user wrote, even if it seems wrong.
