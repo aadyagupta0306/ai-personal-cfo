@@ -13,6 +13,7 @@ EXPENSE_CATEGORIES = [
     "Entertainment",
     "Subscriptions",
     "Bills & Utilities",
+    "Investments",
     "Gifts",
     "Miscellaneous",
 ]
